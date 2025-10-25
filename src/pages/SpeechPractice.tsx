@@ -4,13 +4,17 @@ import { GlassCard } from "@/components/GlassCard";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Mic, Square, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAudioRecorder } from "@/hooks/useAudioRecorder";
+import { supabase } from "@/integrations/supabase/client";
 
 const SpeechPractice = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [isRecording, setIsRecording] = useState(false);
+  const { isRecording, audioBlob, startRecording, stopRecording, resetRecording } = useAudioRecorder();
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [customTopic, setCustomTopic] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [feedback, setFeedback] = useState<{ text: string; score: number } | null>(null);
 
   const suggestedTopics = [
     "My Career Goals",
@@ -21,7 +25,7 @@ const SpeechPractice = () => {
     "Leadership Experience",
   ];
 
-  const handleStartRecording = () => {
+  const handleStartRecording = async () => {
     if (!selectedTopic && !customTopic) {
       toast({
         title: "Topic Required",
@@ -30,20 +34,83 @@ const SpeechPractice = () => {
       });
       return;
     }
-    setIsRecording(true);
+    
+    try {
+      await startRecording();
+      setFeedback(null);
+      toast({
+        title: "Recording Started",
+        description: "Speak clearly about your chosen topic",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Could not access microphone",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleStopRecording = async () => {
+    stopRecording();
     toast({
-      title: "Recording Started",
-      description: "Speak clearly about your chosen topic",
+      title: "Processing",
+      description: "Transcribing and analyzing your speech...",
     });
   };
 
-  const handleStopRecording = () => {
-    setIsRecording(false);
-    toast({
-      title: "Recording Stopped",
-      description: "Analyzing your speech...",
-    });
+  const processAudio = async () => {
+    if (!audioBlob) return;
+
+    setIsProcessing(true);
+    try {
+      const reader = new FileReader();
+      reader.readAsDataURL(audioBlob);
+      reader.onloadend = async () => {
+        const base64Audio = reader.result?.toString().split(',')[1];
+        
+        const { data: transcriptData, error: transcriptError } = await supabase.functions.invoke('transcribe-speech', {
+          body: { audioBase64: base64Audio }
+        });
+
+        if (transcriptError) throw transcriptError;
+
+        const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-speech', {
+          body: { 
+            text: transcriptData.text,
+            topic: selectedTopic || customTopic,
+            type: 'speech'
+          }
+        });
+
+        if (analysisError) throw analysisError;
+
+        setFeedback({
+          text: analysisData.feedback,
+          score: analysisData.score
+        });
+
+        toast({
+          title: "Analysis Complete",
+          description: `Score: ${analysisData.score}/100`,
+        });
+      };
+    } catch (error) {
+      console.error('Error processing audio:', error);
+      toast({
+        title: "Error",
+        description: "Failed to process audio",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+      resetRecording();
+    }
   };
+
+  if (audioBlob && !isProcessing && !feedback) {
+    processAudio();
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted to-background">
@@ -162,8 +229,34 @@ const SpeechPractice = () => {
           </div>
         </GlassCard>
 
+        {/* Feedback */}
+        {feedback && (
+          <GlassCard className="bg-gradient-to-br from-primary/10 to-secondary/10">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-foreground">Your Score</h3>
+                <div className="text-3xl font-bold text-primary">{feedback.score}/100</div>
+              </div>
+              <div className="prose prose-sm max-w-none">
+                <p className="text-sm text-muted-foreground whitespace-pre-wrap">{feedback.text}</p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setFeedback(null);
+                  setSelectedTopic(null);
+                  setCustomTopic("");
+                }}
+                className="w-full"
+              >
+                Practice Again
+              </Button>
+            </div>
+          </GlassCard>
+        )}
+
         {/* Tips */}
-        {!isRecording && (
+        {!isRecording && !feedback && !isProcessing && (
           <GlassCard className="bg-accent/10">
             <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-accent" />

@@ -1,17 +1,19 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/GlassCard";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Upload, FileText, Play, Mic, ChevronLeft, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 
 const PresentationPractice = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { isRecording, startRecording, stopRecording, resetRecording } = useAudioRecorder();
   const [step, setStep] = useState<"upload" | "presenting">("upload");
   const [fileName, setFileName] = useState("");
-  const [isRecording, setIsRecording] = useState(false);
   const [currentSlide, setCurrentSlide] = useState(1);
+  const [duration, setDuration] = useState(0);
   const totalSlides = 8;
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -33,7 +35,7 @@ const PresentationPractice = () => {
     }
   };
 
-  const handleStartPresentation = () => {
+  const handleStartPresentation = async () => {
     if (!fileName) {
       toast({
         title: "No File Uploaded",
@@ -42,12 +44,52 @@ const PresentationPractice = () => {
       });
       return;
     }
-    setStep("presenting");
-    setIsRecording(true);
+    
+    try {
+      await startRecording();
+      setStep("presenting");
+      setDuration(0);
+      toast({
+        title: "Recording Started",
+        description: "Present your slides confidently",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Could not access microphone",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleEndSession = () => {
+    if (isRecording) {
+      stopRecording();
+    }
+    setStep("upload");
+    setCurrentSlide(1);
+    setDuration(0);
+    resetRecording();
     toast({
-      title: "Recording Started",
-      description: "Present your slides confidently",
+      title: "Session Ended",
+      description: "Your presentation has been saved",
     });
+  };
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isRecording) {
+      interval = setInterval(() => {
+        setDuration(prev => prev + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isRecording]);
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const nextSlide = () => {
@@ -195,25 +237,15 @@ const PresentationPractice = () => {
                       {isRecording ? "Recording..." : "Paused"}
                     </h3>
                     <p className="text-sm text-muted-foreground">
-                      Duration: 00:00
+                      Duration: {formatDuration(duration)}
                     </p>
                   </div>
                 </div>
                 
                 <div className="flex gap-3">
                   <Button
-                    variant={isRecording ? "secondary" : "hero"}
-                    onClick={() => setIsRecording(!isRecording)}
-                  >
-                    {isRecording ? "Pause" : "Resume"}
-                  </Button>
-                  <Button
                     variant="destructive"
-                    onClick={() => {
-                      setStep("upload");
-                      setIsRecording(false);
-                      setCurrentSlide(1);
-                    }}
+                    onClick={handleEndSession}
                   >
                     End Session
                   </Button>

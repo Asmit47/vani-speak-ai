@@ -1,9 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/GlassCard";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Users, Mic, Play, Square, MessageSquare } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+
+interface Message {
+  name: string;
+  message: string;
+  isUser: boolean;
+}
 
 const GroupDiscussion = () => {
   const navigate = useNavigate();
@@ -15,6 +22,7 @@ const GroupDiscussion = () => {
     aggression: "balanced",
     topic: "",
   });
+  const [messages, setMessages] = useState<Message[]>([]);
 
   const topics = [
     "Remote Work vs Office Work",
@@ -42,11 +50,47 @@ const GroupDiscussion = () => {
     }
     setStep("discussion");
     setIsActive(true);
+    setMessages([]);
     toast({
       title: "Discussion Started",
       description: "AI participants are ready to discuss",
     });
   };
+
+  const generateAIResponse = async () => {
+    if (!isActive || messages.length >= 20) return;
+
+    try {
+      const { data, error } = await supabase.functions.invoke('group-discussion', {
+        body: {
+          topic: config.topic,
+          participants: config.participants,
+          aggression: config.aggression,
+          history: messages.slice(-5)
+        }
+      });
+
+      if (error) throw error;
+
+      setMessages(prev => [...prev, {
+        name: data.participant,
+        message: data.message,
+        isUser: false
+      }]);
+    } catch (error) {
+      console.error('Error generating AI response:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (isActive && step === "discussion") {
+      const interval = setInterval(() => {
+        generateAIResponse();
+      }, 3000);
+
+      return () => clearInterval(interval);
+    }
+  }, [isActive, step, messages]);
 
   const aiParticipants = [
     { name: "Rahul", color: "from-blue-500 to-blue-600", avatar: "R" },
@@ -199,29 +243,26 @@ const GroupDiscussion = () => {
             {/* Discussion Feed */}
             <GlassCard className="min-h-[300px] max-h-[400px] overflow-y-auto space-y-4">
               <div className="space-y-3">
-                <div className="flex gap-3">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                    R
+                {messages.length === 0 && (
+                  <div className="text-center text-muted-foreground text-sm py-8">
+                    Discussion will begin shortly...
                   </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-foreground mb-1">Rahul</p>
-                    <p className="text-sm text-muted-foreground">
-                      I believe remote work offers better work-life balance and reduces commute stress...
-                    </p>
+                )}
+                {messages.map((msg, idx) => (
+                  <div key={idx} className="flex gap-3">
+                    <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${
+                      msg.isUser 
+                        ? 'from-primary to-secondary' 
+                        : 'from-blue-500 to-blue-600'
+                    } flex items-center justify-center text-white text-xs font-bold flex-shrink-0`}>
+                      {msg.isUser ? 'You' : msg.name.charAt(0)}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-foreground mb-1">{msg.name}</p>
+                      <p className="text-sm text-muted-foreground">{msg.message}</p>
+                    </div>
                   </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                    You
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-foreground mb-1">You</p>
-                    <p className="text-sm text-muted-foreground italic">
-                      {isActive ? "Listening..." : "Your turn to speak"}
-                    </p>
-                  </div>
-                </div>
+                ))}
               </div>
             </GlassCard>
 

@@ -1,20 +1,26 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/GlassCard";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Briefcase, Mic, Play, Square } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAudioRecorder } from "@/hooks/useAudioRecorder";
+import { supabase } from "@/integrations/supabase/client";
 
 const MockInterview = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { isRecording, audioBlob, startRecording, stopRecording, resetRecording } = useAudioRecorder();
   const [step, setStep] = useState<"setup" | "interview" | "feedback">("setup");
-  const [isListening, setIsListening] = useState(false);
   const [config, setConfig] = useState({
     role: "",
     difficulty: "medium",
     type: "behavioral",
   });
+  const [questions, setQuestions] = useState<Array<{ question: string; category: string }>>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const jobRoles = [
     "Software Engineer",
@@ -28,7 +34,7 @@ const MockInterview = () => {
   const difficulties = ["easy", "medium", "hard"];
   const interviewTypes = ["behavioral", "technical", "situational", "general"];
 
-  const handleStartInterview = () => {
+  const handleStartInterview = async () => {
     if (!config.role) {
       toast({
         title: "Role Required",
@@ -37,16 +43,100 @@ const MockInterview = () => {
       });
       return;
     }
-    setStep("interview");
-    toast({
-      title: "Interview Started",
-      description: "The AI interviewer will begin shortly",
-    });
+
+    setIsLoadingQuestions(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('mock-interview', {
+        body: {
+          role: config.role,
+          difficulty: config.difficulty,
+          type: config.type,
+          action: 'generate_questions'
+        }
+      });
+
+      if (error) throw error;
+
+      setQuestions(data.questions);
+      setStep("interview");
+      toast({
+        title: "Interview Started",
+        description: "Answer each question clearly",
+      });
+    } catch (error) {
+      console.error('Error generating questions:', error);
+      toast({
+        title: "Error",
+        description: "Failed to generate questions",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingQuestions(false);
+    }
   };
 
-  const toggleListening = () => {
-    setIsListening(!isListening);
+  const handleStartAnswer = async () => {
+    try {
+      await startRecording();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Could not access microphone",
+        variant: "destructive",
+      });
+    }
   };
+
+  const handleStopAnswer = () => {
+    stopRecording();
+    setIsProcessing(true);
+  };
+
+  useEffect(() => {
+    if (audioBlob && !isProcessing) return;
+    if (!audioBlob) return;
+
+    const processAnswer = async () => {
+      try {
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = async () => {
+          const base64Audio = reader.result?.toString().split(',')[1];
+          
+          const { data: transcriptData, error } = await supabase.functions.invoke('transcribe-speech', {
+            body: { audioBase64: base64Audio }
+          });
+
+          if (error) throw error;
+
+          if (currentQuestionIndex < questions.length - 1) {
+            setCurrentQuestionIndex(prev => prev + 1);
+            toast({
+              title: "Next Question",
+              description: "Moving to the next question",
+            });
+          } else {
+            toast({
+              title: "Interview Complete",
+              description: "Great job completing all questions!",
+            });
+          }
+        };
+      } catch (error) {
+        console.error('Error processing answer:', error);
+        toast({
+          title: "Error",
+          description: "Failed to process answer",
+          variant: "destructive",
+        });
+      } finally {
+        setIsProcessing(false);
+        resetRecording();
+      }
+    };
+
+    processAnswer();
+  }, [audioBlob]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted to-background">
@@ -139,10 +229,10 @@ const MockInterview = () => {
               size="lg"
               onClick={handleStartInterview}
               className="w-full"
-              disabled={!config.role}
+              disabled={!config.role || isLoadingQuestions}
             >
               <Play className="w-5 h-5" />
-              Start Interview
+              {isLoadingQuestions ? "Generating Questions..." : "Start Interview"}
             </Button>
           </>
         )}
@@ -170,14 +260,16 @@ const MockInterview = () => {
                   <Briefcase className="w-10 h-10 text-white" />
                 </div>
                 <div className="space-y-2">
-                  <h3 className="text-lg font-semibold text-foreground">Question 1 of 5</h3>
+                  <h3 className="text-lg font-semibold text-foreground">
+                    Question {currentQuestionIndex + 1} of {questions.length}
+                  </h3>
                   <p className="text-muted-foreground text-sm max-w-2xl mx-auto leading-relaxed">
-                    "Tell me about a time when you faced a challenging situation at work. How did you handle it, and what was the outcome?"
+                    {questions[currentQuestionIndex]?.question || "Loading question..."}
                   </p>
                 </div>
               </div>
 
-              {isListening && (
+              {isRecording && (
                 <div className="flex justify-center">
                   <div className="relative">
                     <div className="w-24 h-24 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-2xl animate-pulse">
@@ -189,15 +281,18 @@ const MockInterview = () => {
               )}
 
               <Button
-                variant={isListening ? "destructive" : "hero"}
+                variant={isRecording ? "destructive" : "hero"}
                 size="lg"
-                onClick={toggleListening}
+                onClick={isRecording ? handleStopAnswer : handleStartAnswer}
+                disabled={isProcessing}
               >
-                {isListening ? (
+                {isRecording ? (
                   <>
                     <Square className="w-5 h-5" />
                     Stop Answer
                   </>
+                ) : isProcessing ? (
+                  "Processing..."
                 ) : (
                   <>
                     <Mic className="w-5 h-5" />
@@ -212,10 +307,15 @@ const MockInterview = () => {
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Progress</span>
-                  <span className="font-medium text-foreground">20%</span>
+                  <span className="font-medium text-foreground">
+                    {Math.round(((currentQuestionIndex + 1) / questions.length) * 100)}%
+                  </span>
                 </div>
                 <div className="h-2 bg-white/50 rounded-full overflow-hidden">
-                  <div className="h-full w-1/5 bg-gradient-to-r from-primary to-secondary rounded-full transition-all duration-500" />
+                  <div 
+                    className="h-full bg-gradient-to-r from-primary to-secondary rounded-full transition-all duration-500"
+                    style={{ width: `${((currentQuestionIndex + 1) / questions.length) * 100}%` }}
+                  />
                 </div>
               </div>
             </GlassCard>
