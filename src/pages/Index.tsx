@@ -45,7 +45,7 @@ const Index = () => {
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
-            <Button variant="hero" onClick={() => navigate("/dashboard")}>
+            <Button variant="hero" onClick={() => navigate("/auth")}>
               Get Started
             </Button>
           </div>
@@ -82,7 +82,7 @@ const Index = () => {
                 <Button 
                   variant="hero" 
                   size="lg"
-                  onClick={() => navigate("/dashboard")}
+                  onClick={() => navigate("/auth")}
                   className="group"
                 >
                   Start Practicing
@@ -91,7 +91,7 @@ const Index = () => {
                 <Button 
                   variant="glass" 
                   size="lg"
-                  onClick={() => navigate("/dashboard")}
+                  onClick={() => navigate("/auth")}
                 >
                   Explore Features
                 </Button>
@@ -155,7 +155,7 @@ const Index = () => {
           <Button 
             variant="hero" 
             size="lg"
-            onClick={() => navigate("/dashboard")}
+            onClick={() => navigate("/auth")}
             className="text-lg px-12"
           >
             Get Started Now

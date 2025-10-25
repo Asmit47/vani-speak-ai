@@ -1,10 +1,47 @@
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { BottomNav } from "@/components/BottomNav";
 import { GlassCard } from "@/components/GlassCard";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { ProfileEditDialog } from "@/components/ProfileEditDialog";
 import { Button } from "@/components/ui/button";
 import { User, Settings, Bell, HelpCircle, LogOut, Palette } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 const Profile = () => {
+  const { user, signOut, loading } = useAuth();
+  const navigate = useNavigate();
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [profile, setProfile] = useState<any>(null);
+
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate('/auth');
+    } else if (user) {
+      fetchProfile();
+    }
+  }, [user, loading, navigate]);
+
+  const fetchProfile = async () => {
+    if (!user) return;
+    
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    setProfile(data);
+  };
+
+  if (loading || !user || !profile) {
+    return null;
+  }
+
+  const initials = profile.display_name?.charAt(0).toUpperCase() || user.email?.charAt(0).toUpperCase() || 'U';
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted to-background pb-24">
       {/* Header */}
@@ -22,14 +59,17 @@ const Profile = () => {
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-6 animate-fade-in">
         {/* User Info */}
         <GlassCard className="text-center space-y-4">
-          <div className="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white font-bold text-3xl shadow-xl">
-            V
-          </div>
+          <Avatar className="w-24 h-24 mx-auto">
+            <AvatarImage src={profile.avatar_url} />
+            <AvatarFallback className="bg-gradient-to-br from-primary to-secondary text-white font-bold text-3xl">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
           <div>
-            <h2 className="text-xl font-semibold text-foreground">VANI User</h2>
-            <p className="text-sm text-muted-foreground">user@vani.app</p>
+            <h2 className="text-xl font-semibold text-foreground">{profile.display_name || 'VANI User'}</h2>
+            <p className="text-sm text-muted-foreground">{user.email}</p>
           </div>
-          <Button variant="outline" className="mx-auto">
+          <Button variant="outline" className="mx-auto" onClick={() => setEditDialogOpen(true)}>
             Edit Profile
           </Button>
         </GlassCard>
@@ -63,12 +103,13 @@ const Profile = () => {
         </GlassCard>
 
         {/* Logout */}
-        <Button variant="destructive" className="w-full">
+        <Button variant="destructive" className="w-full" onClick={signOut}>
           <LogOut className="w-4 h-4" />
           Sign Out
         </Button>
       </div>
 
+      <ProfileEditDialog open={editDialogOpen} onOpenChange={setEditDialogOpen} />
       <BottomNav />
     </div>
   );

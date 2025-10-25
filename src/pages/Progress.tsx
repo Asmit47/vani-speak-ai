@@ -1,8 +1,74 @@
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { BottomNav } from "@/components/BottomNav";
 import { GlassCard } from "@/components/GlassCard";
 import { TrendingUp, Calendar, Award, Target } from "lucide-react";
 
 const Progress = () => {
+  const { user, loading } = useAuth();
+  const navigate = useNavigate();
+  const [stats, setStats] = useState({
+    totalSessions: 0,
+    avgScore: 0,
+    thisWeekSessions: 0,
+  });
+  const [weeklyActivity, setWeeklyActivity] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
+
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate('/auth');
+    } else if (user) {
+      fetchProgress();
+    }
+  }, [user, loading, navigate]);
+
+  const fetchProgress = async () => {
+    if (!user) return;
+
+    // Fetch all practice sessions
+    const { data: sessions } = await supabase
+      .from('practice_sessions')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('completed_at', { ascending: false });
+
+    if (sessions) {
+      const totalSessions = sessions.length;
+      const avgScore = sessions.reduce((acc, s) => acc + (s.score || 0), 0) / totalSessions || 0;
+      
+      // Calculate this week's sessions
+      const oneWeekAgo = new Date();
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+      const thisWeekSessions = sessions.filter(
+        s => new Date(s.completed_at) > oneWeekAgo
+      ).length;
+
+      setStats({ totalSessions, avgScore: Math.round(avgScore), thisWeekSessions });
+
+      // Calculate weekly activity (last 7 days)
+      const activity = [0, 0, 0, 0, 0, 0, 0];
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      sessions.forEach(session => {
+        const sessionDate = new Date(session.completed_at);
+        sessionDate.setHours(0, 0, 0, 0);
+        const daysAgo = Math.floor((today.getTime() - sessionDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (daysAgo >= 0 && daysAgo < 7) {
+          activity[6 - daysAgo]++;
+        }
+      });
+      
+      setWeeklyActivity(activity);
+    }
+  };
+
+  if (loading || !user) {
+    return null;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted to-background pb-24">
       {/* Header */}
@@ -19,25 +85,25 @@ const Progress = () => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <GlassCard hover={false} className="text-center space-y-2">
             <TrendingUp className="w-8 h-8 mx-auto text-primary" />
-            <div className="text-2xl font-bold text-foreground">85%</div>
-            <p className="text-xs text-muted-foreground">Overall Score</p>
+            <div className="text-2xl font-bold text-foreground">{stats.avgScore}%</div>
+            <p className="text-xs text-muted-foreground">Average Score</p>
           </GlassCard>
           
           <GlassCard hover={false} className="text-center space-y-2">
             <Calendar className="w-8 h-8 mx-auto text-secondary" />
-            <div className="text-2xl font-bold text-foreground">5</div>
-            <p className="text-xs text-muted-foreground">Day Streak</p>
+            <div className="text-2xl font-bold text-foreground">{stats.thisWeekSessions}</div>
+            <p className="text-xs text-muted-foreground">This Week</p>
           </GlassCard>
           
           <GlassCard hover={false} className="text-center space-y-2">
             <Target className="w-8 h-8 mx-auto text-accent" />
-            <div className="text-2xl font-bold text-foreground">24</div>
-            <p className="text-xs text-muted-foreground">Sessions Done</p>
+            <div className="text-2xl font-bold text-foreground">{stats.totalSessions}</div>
+            <p className="text-xs text-muted-foreground">Total Sessions</p>
           </GlassCard>
           
           <GlassCard hover={false} className="text-center space-y-2">
             <Award className="w-8 h-8 mx-auto text-primary" />
-            <div className="text-2xl font-bold text-foreground">7</div>
+            <div className="text-2xl font-bold text-foreground">{Math.floor(stats.totalSessions / 3)}</div>
             <p className="text-xs text-muted-foreground">Badges Earned</p>
           </GlassCard>
         </div>
@@ -47,12 +113,13 @@ const Progress = () => {
           <h3 className="text-lg font-semibold text-foreground mb-4">Weekly Activity</h3>
           <div className="flex justify-between items-end h-40 gap-2">
             {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day, index) => {
-              const height = [60, 80, 40, 90, 70, 30, 50][index];
+              const maxSessions = Math.max(...weeklyActivity, 1);
+              const height = (weeklyActivity[index] / maxSessions) * 100;
               return (
                 <div key={day} className="flex-1 flex flex-col items-center gap-2">
                   <div 
                     className="w-full bg-gradient-to-t from-primary to-secondary rounded-t-lg transition-all duration-300 hover:opacity-80"
-                    style={{ height: `${height}%` }}
+                    style={{ height: `${height || 10}%` }}
                   />
                   <span className="text-xs text-muted-foreground">{day}</span>
                 </div>
