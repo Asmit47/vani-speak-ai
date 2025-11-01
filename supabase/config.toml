@@ -11,3 +11,6 @@ verify_jwt = true
 
 [functions.group-discussion]
 verify_jwt = true
+
+[functions.text-to-speech]
+verify_jwt = true

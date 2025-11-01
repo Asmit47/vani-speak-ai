@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/GlassCard";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Briefcase, Mic, Play, Square } from "lucide-react";
+import { ArrowLeft, Briefcase, Mic, Play, Square, Volume2, CheckCircle2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,16 +11,19 @@ const MockInterview = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { isRecording, audioBlob, startRecording, stopRecording, resetRecording } = useAudioRecorder();
-  const [step, setStep] = useState<"setup" | "interview" | "feedback">("setup");
+  const [step, setStep] = useState<"setup" | "interview" | "results">("setup");
   const [config, setConfig] = useState({
     role: "",
     difficulty: "medium",
     type: "behavioral",
   });
   const [questions, setQuestions] = useState<Array<{ question: string; category: string }>>([]);
+  const [answers, setAnswers] = useState<string[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
 
   const jobRoles = [
     "Software Engineer",
@@ -61,8 +64,11 @@ const MockInterview = () => {
       setStep("interview");
       toast({
         title: "Interview Started",
-        description: "Answer each question clearly",
+        description: "Listen to the first question",
       });
+
+      // Speak first question
+      await speakQuestion(data.questions[0].question);
     } catch (error) {
       console.error('Error generating questions:', error);
       toast({
@@ -75,9 +81,34 @@ const MockInterview = () => {
     }
   };
 
+  const speakQuestion = async (question: string) => {
+    setIsSpeaking(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('text-to-speech', {
+        body: { text: question }
+      });
+
+      if (error) throw error;
+
+      const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+      await new Promise((resolve) => {
+        audio.onended = resolve;
+        audio.play();
+      });
+    } catch (error) {
+      console.error('Error speaking question:', error);
+    } finally {
+      setIsSpeaking(false);
+    }
+  };
+
   const handleStartAnswer = async () => {
     try {
       await startRecording();
+      toast({
+        title: "Recording",
+        description: "Answer the question clearly",
+      });
     } catch (error) {
       toast({
         title: "Error",
@@ -89,53 +120,94 @@ const MockInterview = () => {
 
   const handleStopAnswer = () => {
     stopRecording();
+  };
+
+  const processAnswer = async () => {
+    if (!audioBlob) return;
+
     setIsProcessing(true);
+    try {
+      const reader = new FileReader();
+      reader.readAsDataURL(audioBlob);
+      reader.onloadend = async () => {
+        const base64Audio = reader.result?.toString().split(',')[1];
+        
+        const { data: transcriptData, error } = await supabase.functions.invoke('transcribe-speech', {
+          body: { audioBase64: base64Audio }
+        });
+
+        if (error) throw error;
+
+        const newAnswers = [...answers, transcriptData.text];
+        setAnswers(newAnswers);
+
+        if (currentQuestionIndex < questions.length - 1) {
+          setCurrentQuestionIndex(currentQuestionIndex + 1);
+          await speakQuestion(questions[currentQuestionIndex + 1].question);
+          toast({
+            title: "Next Question",
+            description: "Listen and answer",
+          });
+        } else {
+          // All questions answered, get feedback
+          await getFeedback(newAnswers);
+        }
+
+        resetRecording();
+      };
+    } catch (error) {
+      console.error('Error processing answer:', error);
+      toast({
+        title: "Error",
+        description: "Failed to process answer",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const getFeedback = async (allAnswers: string[]) => {
+    setIsProcessing(true);
+    try {
+      const qaList = questions.map((q, i) => `Q${i + 1}: ${q.question}\nA${i + 1}: ${allAnswers[i]}`).join('\n\n');
+
+      const { data, error } = await supabase.functions.invoke('analyze-speech', {
+        body: { 
+          text: qaList,
+          topic: config.role,
+          type: 'interview'
+        }
+      });
+
+      if (error) throw error;
+
+      setFeedback(data.feedback);
+      setStep("results");
+
+      toast({
+        title: "Interview Complete",
+        description: "Review your feedback",
+      });
+
+      // Speak feedback summary
+      await speakQuestion("Interview complete. Here is your performance summary.");
+    } catch (error) {
+      console.error('Error getting feedback:', error);
+      toast({
+        title: "Error",
+        description: "Failed to generate feedback",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   useEffect(() => {
-    if (audioBlob && !isProcessing) return;
-    if (!audioBlob) return;
-
-    const processAnswer = async () => {
-      try {
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = async () => {
-          const base64Audio = reader.result?.toString().split(',')[1];
-          
-          const { data: transcriptData, error } = await supabase.functions.invoke('transcribe-speech', {
-            body: { audioBase64: base64Audio }
-          });
-
-          if (error) throw error;
-
-          if (currentQuestionIndex < questions.length - 1) {
-            setCurrentQuestionIndex(prev => prev + 1);
-            toast({
-              title: "Next Question",
-              description: "Moving to the next question",
-            });
-          } else {
-            toast({
-              title: "Interview Complete",
-              description: "Great job completing all questions!",
-            });
-          }
-        };
-      } catch (error) {
-        console.error('Error processing answer:', error);
-        toast({
-          title: "Error",
-          description: "Failed to process answer",
-          variant: "destructive",
-        });
-      } finally {
-        setIsProcessing(false);
-        resetRecording();
-      }
-    };
-
-    processAnswer();
+    if (audioBlob && !isProcessing && step === "interview") {
+      processAnswer();
+    }
   }, [audioBlob]);
 
   return (
@@ -237,7 +309,7 @@ const MockInterview = () => {
           </>
         )}
 
-        {step === "interview" && (
+        {step === "interview" && questions.length > 0 && (
           <>
             {/* Interview Configuration Display */}
             <GlassCard className="bg-gradient-to-r from-primary/10 to-secondary/10">
@@ -257,7 +329,11 @@ const MockInterview = () => {
             <GlassCard className="text-center space-y-6">
               <div className="space-y-4 animate-fade-in">
                 <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-secondary to-accent flex items-center justify-center shadow-xl">
-                  <Briefcase className="w-10 h-10 text-white" />
+                  {isSpeaking ? (
+                    <Volume2 className="w-10 h-10 text-white animate-pulse" />
+                  ) : (
+                    <Briefcase className="w-10 h-10 text-white" />
+                  )}
                 </div>
                 <div className="space-y-2">
                   <h3 className="text-lg font-semibold text-foreground">
@@ -266,6 +342,9 @@ const MockInterview = () => {
                   <p className="text-muted-foreground text-sm max-w-2xl mx-auto leading-relaxed">
                     {questions[currentQuestionIndex]?.question || "Loading question..."}
                   </p>
+                  {isSpeaking && (
+                    <p className="text-xs text-primary">🔊 Speaking question...</p>
+                  )}
                 </div>
               </div>
 
@@ -284,7 +363,7 @@ const MockInterview = () => {
                 variant={isRecording ? "destructive" : "hero"}
                 size="lg"
                 onClick={isRecording ? handleStopAnswer : handleStartAnswer}
-                disabled={isProcessing}
+                disabled={isProcessing || isSpeaking}
               >
                 {isRecording ? (
                   <>
@@ -320,6 +399,63 @@ const MockInterview = () => {
               </div>
             </GlassCard>
           </>
+        )}
+
+        {step === "results" && feedback && (
+          <GlassCard className="space-y-6 bg-gradient-to-br from-primary/10 to-secondary/10">
+            <div className="text-center">
+              <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-xl">
+                <CheckCircle2 className="w-10 h-10 text-white" />
+              </div>
+              <h3 className="text-2xl font-bold text-foreground mb-2">Interview Complete!</h3>
+              <p className="text-muted-foreground">Here's your performance summary</p>
+            </div>
+
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl bg-white/50 backdrop-blur-sm border border-border">
+                <h4 className="font-semibold text-foreground mb-3">Detailed Feedback</h4>
+                <div className="prose prose-sm max-w-none">
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">{feedback}</p>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-white/50 backdrop-blur-sm border border-border">
+                <h4 className="font-semibold text-foreground mb-2">Your Answers</h4>
+                <div className="space-y-3 max-h-64 overflow-y-auto">
+                  {answers.map((answer, index) => (
+                    <div key={index} className="text-xs">
+                      <p className="text-primary font-medium">Q{index + 1}: {questions[index]?.question}</p>
+                      <p className="text-muted-foreground mt-1">A: {answer}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setStep("setup");
+                  setConfig({ role: "", difficulty: "medium", type: "behavioral" });
+                  setQuestions([]);
+                  setAnswers([]);
+                  setCurrentQuestionIndex(0);
+                  setFeedback(null);
+                }}
+                className="flex-1"
+              >
+                Try Another Role
+              </Button>
+              <Button
+                variant="hero"
+                onClick={() => navigate("/dashboard")}
+                className="flex-1"
+              >
+                Back to Dashboard
+              </Button>
+            </div>
+          </GlassCard>
         )}
       </div>
     </div>

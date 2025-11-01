@@ -15,6 +15,8 @@ const SpeechPractice = () => {
   const [customTopic, setCustomTopic] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; score: number } | null>(null);
+  const [voiceFeedbackEnabled, setVoiceFeedbackEnabled] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
   const suggestedTopics = [
     "My Career Goals",
@@ -94,6 +96,11 @@ const SpeechPractice = () => {
           title: "Analysis Complete",
           description: `Score: ${analysisData.score}/100`,
         });
+
+        // Play voice feedback if enabled
+        if (voiceFeedbackEnabled) {
+          playVoiceFeedback(analysisData.feedback);
+        }
       };
     } catch (error) {
       console.error('Error processing audio:', error);
@@ -111,6 +118,24 @@ const SpeechPractice = () => {
   if (audioBlob && !isProcessing && !feedback) {
     processAudio();
   }
+
+  const playVoiceFeedback = async (text: string) => {
+    setIsPlayingAudio(true);
+    try {
+      const { data: ttsData, error: ttsError } = await supabase.functions.invoke('text-to-speech', {
+        body: { text }
+      });
+
+      if (ttsError) throw ttsError;
+
+      const audio = new Audio(`data:audio/mp3;base64,${ttsData.audioContent}`);
+      audio.onended = () => setIsPlayingAudio(false);
+      await audio.play();
+    } catch (error) {
+      console.error('Error playing voice feedback:', error);
+      setIsPlayingAudio(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted to-background">
@@ -251,6 +276,27 @@ const SpeechPractice = () => {
               >
                 Practice Again
               </Button>
+            </div>
+          </GlassCard>
+        )}
+
+        {/* Voice Feedback Toggle */}
+        {!isRecording && !isProcessing && (
+          <GlassCard className="bg-accent/10">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Voice Feedback</h3>
+                <p className="text-xs text-muted-foreground">Hear your results aloud</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={voiceFeedbackEnabled}
+                  onChange={(e) => setVoiceFeedbackEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+              </label>
             </div>
           </GlassCard>
         )}
